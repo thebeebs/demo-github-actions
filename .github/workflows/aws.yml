@@ -1,6 +1,8 @@
+
 on:
-  release:
-    types: [created]
+  push:
+    branches:
+      - master
 
 name: Deploy to Amazon ECS
 
@@ -8,18 +10,33 @@ jobs:
   deploy:
     name: Deploy
     runs-on: ubuntu-latest
-    environment: production
 
     steps:
+    - name: Check commit status
+      id: commit-status
+      run: |
+        # Check the status of the Git commit
+        CURRENT_STATUS=$(curl --url https://api.github.com/repos/${{ github.repository }}/commits/${{ github.sha }}/status --header 'authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' | jq -r '.state');
+        echo "Current status is: $CURRENT_STATUS"
+        while [ "${CURRENT_STATUS^^}" = "PENDING" ]; 
+          do sleep 10; 
+          CURRENT_STATUS=$(curl --url https://api.github.com/repos/${{ github.repository }}/commits/${{ github.sha }}/status --header 'authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' | jq -r '.state');
+        done;
+        echo "Current status is: $CURRENT_STATUS"
+        if [ "${CURRENT_STATUS^^}" = "FAILURE" ]; 
+          then echo "Commit status failed. Canceling execution"; 
+          exit 1; 
+        fi
+        
     - name: Checkout
-      uses: actions/checkout@v2
+      uses: actions/checkout@v1
 
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v1
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: us-west-2
+        aws-region: <YOUR_AWS_REGION>
 
     - name: Login to Amazon ECR
       id: login-ecr
@@ -38,7 +55,7 @@ jobs:
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
         echo "::set-output name=image::$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-
+        
     - name: Fill in the new image ID in the Amazon ECS task definition
       id: task-def
       uses: aws-actions/amazon-ecs-render-task-definition@v1
